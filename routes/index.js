@@ -1,19 +1,125 @@
-const express = require('express')
-const db = require('../db')
+var express = require('express');
+var db = require('../db');
+var ensureLogIn = require('connect-ensure-login').ensureLoggedIn;
+var router = express.Router();
 
-const router = express.Router()
+var ensureLoggedIn = ensureLogIn();
 
-//get index page
-router.get('/index',(req,res,next)=>{
+function fetchExer(req, res, next) {
+    db.all('SELECT * FROM exer WHERE owner_id = ?', [
+      req.user.id
+    ], function(err, rows) {
+      if (err) { return next(err); }
+      
+      var exer = rows.map(function(row) {
+        return {
+          id: row.id,
+          title: row.title,
+          completed: row.completed == 1 ? true : false,
+          url: '/' + row.id
+        }
+      });
+      res.locals.exer = exer;
+      res.locals.activeCount = exer.filter(function(todo) { return !todo.completed; }).length;
+      res.locals.completedCount = exer.length - res.locals.activeCount;
+      next();
+    });
+  }
 
-    res.locals.filter = null
-    res.render('index')
-})
+// get the home page
 
-//get home page
-router.get('/',(req,res,next)=>{
+router.get('/', function(req, res, next) {
 
-    res.render('home')
-})
+    if(!req.user) {return res.render('home');}
+    next();
 
-module.exports = router
+}, fetchExer, function(req, res, next) {
+    res.locals.filter = null;
+    res.render('index', {user: req.user});
+});
+
+router.get('/active', ensureLoggedIn, fetchExer, function(req, res, next) {
+    res.locals.exer = res.locals.exer.filter(function(todo) { return !todo.completed; });
+    res.locals.filter = 'active';
+    res.render('index', { user: req.user });
+  });
+  
+  router.get('/completed', ensureLoggedIn, fetchExer, function(req, res, next) {
+    res.locals.exer = res.locals.exer.filter(function(todo) { return todo.completed; });
+    res.locals.filter = 'completed';
+    res.render('index', { user: req.user });
+  });
+  
+router.post('/', ensureLoggedIn, function(req, res, next) {
+    req.body.title = req.body.title.trim();
+    next();
+  }, function(req, res, next) {
+    if (req.body.title !== '') { return next(); }
+    return res.redirect('/' + (req.body.filter || ''));
+  }, function(req, res, next) {
+    db.run('INSERT INTO exer (owner_id, title, completed) VALUES (?, ?, ?)', [
+      req.user.id,
+      req.body.title,
+      req.body.completed == true ? 1 : null
+    ], function(err) {
+      if (err) { return next(err); }
+      return res.redirect('/' + (req.body.filter || ''));
+    });
+  });
+
+  router.post('/:id(\\d+)', ensureLoggedIn, function(req, res, next) {
+    req.body.title = req.body.title.trim();
+    next(); }, function(req, res, next) {
+        if (req.body.title !== '') { return next(); }
+     db.run('DELETE FROM exer WHERE id = ? AND owner_id = ?', [
+        req.params.id,
+        req.user.id
+    ], function(err) {
+        if (err) { return next(err); }
+        return res.redirect('/' + ( req.body.filter || ''));
+    });
+}, function(req, res, next) {
+    db.run(' UPDATE exer SET title = ?, completed = ? WHERE id = ? AND owner_id = ?', [
+        req.body.title,
+        req.body.completed !== undefined ? 1 : null,
+        req.params.id,
+        req.user.id
+    ], function(err) {
+        if (err) {return next(err); }
+        return res.redirect('/' + ( req.body.filter || ''));
+    })
+  });
+
+
+  router.post('/:id(\\d+)/delete', ensureLoggedIn, function(req, res, next) {
+    db.run('DELETE FROM exer WHERE id = ? AND owner_id = ?', [
+        req.params.id,
+        req.user.id
+    ], function(err) {
+        if (err) { return next(err); }
+        return res.redirect('/' + ( req.body.filter || ''));
+    });
+  });
+
+  router.post('/toggle-all', ensureLoggedIn, function(req, res, next) {
+    db.run('UPDATE exer SET completed = ? WHERE owner_id = ?', [
+        req.body.completed !== undefined ? 1 : null,
+        req.user.id
+    ], function(err) {
+        if (err) { return next(err); }
+        return res.redirect('/' + ( req.body.filter || ''));
+    });
+  });
+
+  router.post('/clear-completed', ensureLoggedIn, function(req, res, next) {
+    db.run('DELETE FROM exer WHERE id = ? AND owner_id = ?', [
+        req.user.id,
+        1
+    ], function(err) {
+        if (err) { return next(err); }
+        return res.redirect('/' + ( req.body.filter || ''));
+    });
+  });
+
+
+module.exports = router; 
